@@ -6,10 +6,11 @@ import org.apache.kafka.common.cache.SynchronizedCache;
 import org.apache.kafka.connect.connector.ConnectRecord
 import org.apache.kafka.connect.data.Schema
 import org.apache.kafka.connect.data.SchemaBuilder
+import org.apache.kafka.connect.data.Struct
 import org.apache.kafka.connect.errors.DataException
 
-internal fun <R : ConnectRecord<R>> keyCloneField(cfg: Config): (R) -> R = recordTransfomer(cfg, Lens.Key)
-internal fun <R : ConnectRecord<R>> valueCloneField(cfg: Config): (R) -> R = recordTransfomer(cfg, Lens.Value)
+internal fun <R : ConnectRecord<R>> keyCloneField(cfg: Config): (R) -> R = recordTransformer(cfg, Lens.Key)
+internal fun <R : ConnectRecord<R>> valueCloneField(cfg: Config): (R) -> R = recordTransformer(cfg, Lens.Value)
 
 private sealed interface Lens {
     fun <R : ConnectRecord<R>> getSchema(r: R): Schema?
@@ -37,16 +38,16 @@ private fun <R : ConnectRecord<R>> recordTransformer(cfg: Config, lens: Lens): (
     val schemaCache = SynchronizedCache<Schema, Schema>(LRUCache<Schema, Schema>(CACHE_SIZE))
     return { record ->
         val schema = lens.getSchema(record) ?: throw DataException("Cannot apply without schema")
-        val value = lens.getValue(record)
-        if (value == null) {
-            record
-        } else {
-            val (newSchema, newValue) =
-            val updatedSchema =
-                schemaCache.get(schema) ?: buildUpdatedSchema(schema, cfg).also { schemaCache.put(schema, it) }
+        val value = lens.getValue(record) ?: throw DataException("Cannot apply without value")
+        val originalVal = value as Struct
+        val updatedSchema =
+            schemaCache.get(schema) ?: buildUpdatedSchema(schema, cfg).also { schemaCache.put(schema, it) }
+        val updatedVal = Struct(updatedSchema).apply {
+            originalVal.schema().fields().forEach { put(it, originalVal[it]) }
+            put(cfg.to, originalVal[cfg.from])
         }
+        lens.createNewRecord(record, updatedSchema, updatedVal)
     }
-
 }
 
 private fun <K, V> Cache<K, V>.getOrPut(key: K, defaultVal: () -> V): V = get(key) ?: defaultVal().also { put(key, it) }
